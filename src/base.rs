@@ -74,33 +74,24 @@ impl EncodingPacket {
         EncodingPacket { payload_id, data }
     }
 
-    /// Deserializes a packet from its on-wire representation, returning
-    /// [`None`] if `data` is too short to contain one.
-    ///
-    /// A packet begins with the 4-byte FEC Payload ID defined in section
-    /// [4.4.2](https://tools.ietf.org/html/rfc6330#section-4.4.2), so any
-    /// input shorter than that cannot be a packet. Prefer this over
-    /// [`EncodingPacket::deserialize`] whenever the bytes come from an
-    /// untrusted source such as a network peer, where a panic would
-    /// otherwise be remotely reachable.
-    pub fn try_deserialize(data: &[u8]) -> Option<EncodingPacket> {
-        let payload_data: &[u8; 4] = data.get(..4)?.try_into().ok()?;
-        Some(EncodingPacket {
-            payload_id: PayloadId::deserialize(payload_data),
-            data: Vec::from(&data[4..]),
-        })
-    }
-
     /// Deserializes a packet from its on-wire representation.
+    ///
+    /// The first 4 bytes are the FEC Payload ID defined in section
+    /// [4.4.2](https://tools.ietf.org/html/rfc6330#section-4.4.2), and the
+    /// remainder is the payload. No integrity checking is performed or
+    /// possible here; see the [crate-level
+    /// documentation](crate#erasure-correction-not-error-detection) for the
+    /// caller's responsibility to reject corrupt data before decoding it.
     ///
     /// # Panics
     ///
-    /// Panics if `data` is shorter than 4 bytes, the size of the FEC
-    /// Payload ID. Use [`EncodingPacket::try_deserialize`] for input that
-    /// may be truncated or attacker-controlled.
+    /// Panics if `data` is shorter than 4 bytes.
     pub fn deserialize(data: &[u8]) -> EncodingPacket {
-        Self::try_deserialize(data)
-            .expect("EncodingPacket::deserialize requires at least 4 bytes of FEC Payload ID")
+        let payload_data = [data[0], data[1], data[2], data[3]];
+        EncodingPacket {
+            payload_id: PayloadId::deserialize(&payload_data),
+            data: Vec::from(&data[4..]),
+        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -350,36 +341,6 @@ pub fn intermediate_tuple(
 #[cfg(test)]
 mod tests {
     use crate::{EncodingPacket, ObjectTransmissionInformation, PayloadId};
-
-    #[test]
-    fn try_deserialize_rejects_short_packets() {
-        // A packet must carry at least the 4-byte FEC Payload ID.
-        for len in 0..4 {
-            let bytes = vec![0u8; len];
-            assert!(
-                EncodingPacket::try_deserialize(&bytes).is_none(),
-                "{len}-byte input should not deserialize"
-            );
-        }
-    }
-
-    #[test]
-    fn try_deserialize_accepts_header_only_and_matches_deserialize() {
-        for len in 4..16 {
-            let bytes: Vec<u8> = (0..len as u8).collect();
-            let parsed = EncodingPacket::try_deserialize(&bytes)
-                .expect("input of at least 4 bytes should deserialize");
-            assert_eq!(parsed.data().len(), len - 4);
-            assert_eq!(parsed, EncodingPacket::deserialize(&bytes));
-        }
-    }
-
-    #[test]
-    fn try_deserialize_round_trips_serialize() {
-        let packet = EncodingPacket::new(PayloadId::new(3, 12345), vec![1, 2, 3, 4, 5]);
-        let bytes = packet.serialize();
-        assert_eq!(EncodingPacket::try_deserialize(&bytes), Some(packet));
-    }
     use rand::RngExt;
 
     #[test]
